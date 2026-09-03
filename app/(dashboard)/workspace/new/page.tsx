@@ -34,6 +34,15 @@ export default function NewWorkspacePage() {
       return
     }
 
+    // 1. Ensure profile exists in profiles table
+    const fullName = user.user_metadata?.full_name || user.email?.split('@')[0] || 'Pengguna'
+    await supabase.from('profiles').upsert({
+      id: user.id,
+      full_name: fullName,
+      email: user.email,
+    }, { onConflict: 'id' })
+
+    // 2. Insert workspace
     const { data, error: insertError } = await supabase
       .from('workspaces')
       .insert({

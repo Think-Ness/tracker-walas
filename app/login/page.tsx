@@ -53,6 +53,14 @@ export default function LoginPage() {
         return
       }
 
+      if (data?.user) {
+        await supabase.from('profiles').upsert({
+          id: data.user.id,
+          full_name: fullName.trim() || email.split('@')[0] || 'Pengguna',
+          email: data.user.email || email,
+        }, { onConflict: 'id' })
+      }
+
       // If Supabase has email confirmation enabled
       if (data?.user && !data.session) {
         setFormSuccess('Pendaftaran berhasil! Silakan cek email Anda untuk konfirmasi, atau hubungi admin Supabase untuk mematikan konfirmasi email.')
