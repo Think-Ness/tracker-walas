@@ -24,7 +24,7 @@ interface NavItem {
 
 const classNavItems: NavItem[] = [
   {
-    label: 'Dashboard',
+    label: 'Daftar Kelas',
     href: '/class',
     icon: <LayoutDashboard size={16} />,
   },

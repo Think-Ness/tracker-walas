@@ -1,21 +1,20 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import { StatCard, EmptyState, Button, PageHeader } from '@/components/ui'
-import { formatDate } from '@/lib/utils'
-import { Users, AlertCircle, Plus } from 'lucide-react'
+import { PageHeader, EmptyState, Button, Badge } from '@/components/ui'
+import { Plus, Users, BarChart2, ArrowRight, AlertTriangle, CheckCircle2, GraduationCap } from 'lucide-react'
 import type { Metadata } from 'next'
 
-export const metadata: Metadata = { title: 'Dashboard Kelas' }
+export const metadata: Metadata = { title: 'Daftar Kelas' }
 
-export default async function ClassPage() {
+export default async function ClassListPage() {
   const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  // Get class workspace
+  // 1. Get class workspace
   const { data: workspace } = await supabase
     .from('workspaces')
     .select('*')
@@ -29,7 +28,7 @@ export default async function ClassPage() {
       <div className="max-w-2xl mx-auto py-8">
         <EmptyState
           title="Belum ada workspace kelas"
-          description="Buat workspace kelas untuk mulai melakukan monitoring anggota."
+          description="Buat workspace kelas untuk mulai mengelola kelas dan memonitor perkembangan santri."
           action={
             <Link href="/workspace/new?type=class">
               <Button variant="primary">
@@ -43,201 +42,219 @@ export default async function ClassPage() {
     )
   }
 
-  // Get class groups
+  // 2. Get all class groups
   const { data: classGroups } = await supabase
     .from('class_groups')
     .select('*')
     .eq('workspace_id', workspace.id)
     .eq('is_active', true)
-    .order('created_at', { ascending: false })
+    .order('name')
 
-  if (!classGroups || classGroups.length === 0) {
-    return (
-      <div>
-        <PageHeader
-          title="Kelas"
-          description={workspace.name}
-          action={
-            <Link href="/class/new">
-              <Button variant="primary">
-                <Plus size={16} />
-                Buat Kelas
-              </Button>
-            </Link>
-          }
-        />
-        <EmptyState
-          title="Belum ada kelas"
-          description="Buat kelas pertama untuk mulai memasukkan anggota dan melakukan monitoring."
-          action={
-            <Link href="/class/new">
-              <Button variant="primary">
-                <Plus size={16} />
-                Buat Kelas
-              </Button>
-            </Link>
-          }
-        />
-      </div>
-    )
-  }
-
-  // If there's only one class, show its dashboard directly
-  const primaryClass = classGroups[0]
-
-  // Stats
-  const { count: totalMembers } = await supabase
-    .from('class_members')
-    .select('id', { count: 'exact', head: true })
-    .eq('class_group_id', primaryClass.id)
-    .eq('status', 'active')
-
-  // Members monitored this month
+  // Calculate stats for each class
   const thisMonth = new Date()
   thisMonth.setDate(1)
-  const { data: monitoredIds } = await supabase
-    .from('member_monitoring')
-    .select('member_id')
-    .gte('observed_at', thisMonth.toISOString().split('T')[0])
+  const monthStartStr = thisMonth.toISOString().split('T')[0]
 
-  const uniqueMonitored = new Set(monitoredIds?.map((m) => m.member_id) ?? []).size
-  const unmonitored = (totalMembers ?? 0) - uniqueMonitored
+  const classesWithStats = await Promise.all(
+    (classGroups || []).map(async (cls) => {
+      // Members count
+      const { count: totalMembers } = await supabase
+        .from('class_members')
+        .select('id', { count: 'exact', head: true })
+        .eq('class_group_id', cls.id)
+        .eq('status', 'active')
 
-  // Recent monitoring activity
-  const { data: recentMonitoring } = await supabase
-    .from('member_monitoring')
-    .select('*, class_members(name)')
-    .order('observed_at', { ascending: false })
-    .limit(8)
+      // Monitored members this month
+      const { data: monitored } = await supabase
+        .from('member_monitoring')
+        .select('member_id, rating, class_members!inner(class_group_id)')
+        .eq('class_members.class_group_id', cls.id)
+        .gte('observed_at', monthStartStr)
+
+      const monitoredSet = new Set(monitored?.map((m) => m.member_id) || [])
+      const uniqueMonitored = monitoredSet.size
+
+      // Needing attention count (rating 1 or 2)
+      const needsAttentionCount = new Set(
+        monitored?.filter((m) => m.rating <= 2).map((m) => m.member_id) || []
+      ).size
+
+      const total = totalMembers || 0
+      const percentage = total > 0 ? Math.round((uniqueMonitored / total) * 100) : 0
+
+      return {
+        ...cls,
+        totalMembers: total,
+        uniqueMonitored,
+        needsAttentionCount,
+        percentage,
+      }
+    })
+  )
+
+  const overallTotalMembers = classesWithStats.reduce((acc, c) => acc + c.totalMembers, 0)
+  const overallMonitored = classesWithStats.reduce((acc, c) => acc + c.uniqueMonitored, 0)
+  const overallNeedsAttention = classesWithStats.reduce((acc, c) => acc + c.needsAttentionCount, 0)
 
   return (
-    <div>
+    <div className="space-y-6">
+      {/* Header */}
       <PageHeader
-        title={primaryClass.name}
-        description={`Tahun Ajaran ${primaryClass.academic_year ?? '-'}`}
+        title="Daftar Kelas (Wali Kelas)"
+        description={`${workspace.name} — Kelola rombel kelas, santri, dan monitoring perkembangan.`}
         action={
-          <Link href={`/class/${primaryClass.id}/members`}>
+          <Link href="/class/new">
             <Button variant="primary">
-              <Users size={16} />
-              Lihat Anggota
+              <Plus size={16} />
+              Tambah Kelas Baru
             </Button>
           </Link>
         }
       />
 
-      {/* KPI Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-        <StatCard
-          label="Total Anggota"
-          value={totalMembers ?? 0}
-          icon={<Users size={18} />}
-        />
-        <StatCard
-          label="Terpantau Bulan Ini"
-          value={uniqueMonitored}
-        />
-        <StatCard
-          label="Belum Terpantau"
-          value={unmonitored}
-          subtitle={unmonitored > 0 ? 'Perlu perhatian' : undefined}
-        />
-        <Link href={`/class/${primaryClass.id}`} className="block">
-          <StatCard
-            label="Detail Kelas"
-            value="→"
-            subtitle="Lihat profil lengkap"
-          />
-        </Link>
-      </div>
+      {/* Summary KPI Cards across all classes */}
+      {classesWithStats.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+          <div className="bg-white border border-[var(--border)] rounded-[var(--radius-lg)] p-4 shadow-sm">
+            <div className="flex items-center justify-between text-[var(--foreground-muted)] mb-1">
+              <span className="text-xs font-medium uppercase tracking-wider">Total Kelas</span>
+              <GraduationCap size={16} className="text-[var(--primary)]" />
+            </div>
+            <p className="text-2xl font-bold text-[var(--foreground)]">{classesWithStats.length}</p>
+            <p className="text-[11px] text-[var(--foreground-muted)] mt-0.5">Rombongan belajar aktif</p>
+          </div>
 
-      {/* Alert if unmonitored */}
-      {unmonitored > 0 && (
-        <div className="mb-6 flex items-center gap-3 px-4 py-3 rounded-[var(--radius-md)] bg-[var(--warning-subtle)] border border-amber-200">
-          <AlertCircle size={16} className="text-[var(--warning)] flex-shrink-0" />
-          <p className="text-sm text-[var(--foreground-secondary)]">
-            <span className="font-medium">{unmonitored} anggota</span> belum dimonitor bulan ini.
-          </p>
-          <Link
-            href={`/class/${primaryClass.id}/monitoring`}
-            className="ml-auto text-sm font-medium text-[var(--warning)] hover:underline flex-shrink-0"
-          >
-            Mulai monitoring
-          </Link>
+          <div className="bg-white border border-[var(--border)] rounded-[var(--radius-lg)] p-4 shadow-sm">
+            <div className="flex items-center justify-between text-[var(--foreground-muted)] mb-1">
+              <span className="text-xs font-medium uppercase tracking-wider">Total Santri</span>
+              <Users size={16} className="text-blue-500" />
+            </div>
+            <p className="text-2xl font-bold text-[var(--foreground)]">{overallTotalMembers}</p>
+            <p className="text-[11px] text-[var(--foreground-muted)] mt-0.5">Seluruh santri aktif</p>
+          </div>
+
+          <div className="bg-white border border-[var(--border)] rounded-[var(--radius-lg)] p-4 shadow-sm">
+            <div className="flex items-center justify-between text-[var(--foreground-muted)] mb-1">
+              <span className="text-xs font-medium uppercase tracking-wider">Terpantau Bulan Ini</span>
+              <CheckCircle2 size={16} className="text-[var(--success)]" />
+            </div>
+            <p className="text-2xl font-bold text-[var(--foreground)]">
+              {overallMonitored}
+              <span className="text-xs font-normal text-[var(--foreground-muted)] ml-1">
+                ({overallTotalMembers > 0 ? Math.round((overallMonitored / overallTotalMembers) * 100) : 0}%)
+              </span>
+            </p>
+            <p className="text-[11px] text-[var(--foreground-muted)] mt-0.5">Sudah diobservasi</p>
+          </div>
+
+          <div className="bg-white border border-[var(--border)] rounded-[var(--radius-lg)] p-4 shadow-sm">
+            <div className="flex items-center justify-between text-[var(--foreground-muted)] mb-1">
+              <span className="text-xs font-medium uppercase tracking-wider">Perlu Perhatian</span>
+              <AlertTriangle size={16} className="text-amber-500" />
+            </div>
+            <p className="text-2xl font-bold text-amber-600">{overallNeedsAttention}</p>
+            <p className="text-[11px] text-[var(--foreground-muted)] mt-0.5">Skor observasi ≤ 2</p>
+          </div>
         </div>
       )}
 
-      {/* Multiple classes list */}
-      {classGroups.length > 1 && (
-        <div className="mb-6">
-          <h2 className="text-sm font-semibold text-[var(--foreground)] mb-3">Semua Kelas</h2>
-          <div className="bg-white border border-[var(--border)] rounded-[var(--radius-lg)] divide-y divide-[var(--border)]">
-            {classGroups.map((cls) => (
-              <Link
-                key={cls.id}
-                href={`/class/${cls.id}`}
-                className="flex items-center justify-between px-5 py-3.5 hover:bg-[var(--background-secondary)] transition-colors"
-              >
-                <div>
-                  <p className="text-sm font-medium text-[var(--foreground)]">{cls.name}</p>
-                  <p className="text-xs text-[var(--foreground-muted)]">
-                    Tahun Ajaran {cls.academic_year ?? '-'}
-                  </p>
+      {/* Class List Cards Grid */}
+      {classesWithStats.length === 0 ? (
+        <EmptyState
+          title="Belum ada kelas yang dibuat"
+          description="Buat kelas pertama Anda (contoh: Kelas 6 D) untuk mulai menginput data anggota santri dan melakukan monitoring harian."
+          icon={<GraduationCap size={36} className="opacity-40" />}
+          action={
+            <Link href="/class/new">
+              <Button variant="primary">
+                <Plus size={16} />
+                Tambah Kelas Sekarang
+              </Button>
+            </Link>
+          }
+        />
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {classesWithStats.map((cls) => (
+            <div
+              key={cls.id}
+              className="bg-white border border-[var(--border)] rounded-[var(--radius-lg)] p-5 flex flex-col justify-between hover:border-[var(--primary)] hover:shadow-md transition-all group"
+            >
+              <div>
+                {/* Header Card */}
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div>
+                    <h2 className="text-base font-bold text-[var(--foreground)] group-hover:text-[var(--primary)] transition-colors">
+                      {cls.name}
+                    </h2>
+                    <p className="text-xs text-[var(--foreground-muted)] mt-0.5">
+                      {cls.level ? `${cls.level} · ` : ''}Tahun Ajaran {cls.academic_year ?? '-'}
+                    </p>
+                  </div>
+                  <Badge variant="primary" className="text-[11px]">
+                    {cls.totalMembers} Santri
+                  </Badge>
                 </div>
-                <span className="text-[var(--foreground-muted)] text-xs">→</span>
-              </Link>
-            ))}
-          </div>
-        </div>
-      )}
 
-      {/* Recent Activity */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-[var(--foreground)]">Aktivitas Monitoring Terbaru</h2>
-          <Link
-            href={`/class/${primaryClass.id}/monitoring`}
-            className="text-xs text-[var(--primary)] hover:underline"
-          >
-            Lihat semua
-          </Link>
-        </div>
+                {cls.description && (
+                  <p className="text-xs text-[var(--foreground-secondary)] line-clamp-2 mb-4">
+                    {cls.description}
+                  </p>
+                )}
 
-        {!recentMonitoring || recentMonitoring.length === 0 ? (
-          <div className="bg-white border border-[var(--border)] rounded-[var(--radius-lg)] p-8 text-center">
-            <p className="text-sm text-[var(--foreground-muted)]">Belum ada aktivitas monitoring.</p>
-          </div>
-        ) : (
-          <div className="bg-white border border-[var(--border)] rounded-[var(--radius-lg)] divide-y divide-[var(--border)]">
-            {recentMonitoring.map((m: any) => (
-              <div key={m.id} className="px-5 py-3 flex items-start gap-4">
-                <div className="mt-0.5 flex-shrink-0">
-                  <div className="h-7 w-7 rounded-full bg-[var(--primary-subtle)] flex items-center justify-center">
-                    <span className="text-xs font-semibold text-[var(--primary)]">
-                      {m.rating}
+                {/* Progress bar keterpantauan bulan ini */}
+                <div className="my-4 bg-[var(--background-secondary)] p-3 rounded-[var(--radius-md)] border border-[var(--border)]">
+                  <div className="flex items-center justify-between text-xs mb-1.5">
+                    <span className="text-[var(--foreground-muted)] font-medium">Monitoring Bulan Ini</span>
+                    <span className="font-semibold text-[var(--foreground)]">
+                      {cls.uniqueMonitored}/{cls.totalMembers} ({cls.percentage}%)
                     </span>
                   </div>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-[var(--foreground)]">
-                    {m.class_members?.name ?? '-'}
-                  </p>
-                  <p className="text-xs text-[var(--foreground-muted)]">
-                    {m.category} · {formatDate(m.observed_at)}
-                  </p>
-                  {m.note && (
-                    <p className="mt-0.5 text-xs text-[var(--foreground-secondary)] line-clamp-1">
-                      {m.note}
-                    </p>
+                  <div className="w-full bg-[var(--border)] h-2 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        cls.percentage >= 80
+                          ? 'bg-[var(--success)]'
+                          : cls.percentage >= 50
+                          ? 'bg-[var(--primary)]'
+                          : 'bg-amber-500'
+                      }`}
+                      style={{ width: `${Math.min(100, cls.percentage)}%` }}
+                    />
+                  </div>
+
+                  {cls.needsAttentionCount > 0 && (
+                    <div className="flex items-center gap-1.5 mt-2 text-[11px] text-amber-700 bg-amber-50 px-2 py-1 rounded">
+                      <AlertTriangle size={12} className="flex-shrink-0" />
+                      <span>{cls.needsAttentionCount} santri butuh perhatian/bimbingan</span>
+                    </div>
                   )}
                 </div>
-                <span className="text-xs text-[var(--foreground-muted)] flex-shrink-0">
-                  {m.rating}/5
-                </span>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+
+              {/* Actions */}
+              <div className="pt-3 border-t border-[var(--border)] flex items-center gap-2">
+                <Link href={`/class/${cls.id}`} className="flex-1">
+                  <Button variant="primary" size="sm" className="w-full justify-center">
+                    Buka Kelas
+                    <ArrowRight size={14} />
+                  </Button>
+                </Link>
+                <Link href={`/class/${cls.id}/members`}>
+                  <Button variant="outline" size="sm" title="Kelola Anggota">
+                    <Users size={14} />
+                  </Button>
+                </Link>
+                <Link href={`/class/${cls.id}/monitoring`}>
+                  <Button variant="outline" size="sm" title="Monitoring">
+                    <BarChart2 size={14} />
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
