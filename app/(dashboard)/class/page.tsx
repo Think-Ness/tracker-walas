@@ -8,7 +8,12 @@ import type { Metadata } from 'next'
 
 export const metadata: Metadata = { title: 'Daftar Kelas' }
 
-export default async function ClassListPage() {
+interface Props {
+  searchParams?: Promise<{ workspaceId?: string }>
+}
+
+export default async function ClassListPage({ searchParams }: Props) {
+  const { workspaceId } = (await searchParams) || {}
   const supabase = await createClient()
   const {
     data: { user },
@@ -16,13 +21,21 @@ export default async function ClassListPage() {
   if (!user) redirect('/login')
 
   // 1. Get class workspace
-  const { data: workspace } = await supabase
+  let wsQuery = supabase
     .from('workspaces')
     .select('*')
     .eq('owner_id', user.id)
     .eq('type', 'class')
     .eq('is_active', true)
-    .single()
+
+  if (workspaceId) {
+    wsQuery = wsQuery.eq('id', workspaceId)
+  }
+
+  const { data: workspace } = await wsQuery
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
 
   if (!workspace) {
     return (

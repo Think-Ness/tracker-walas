@@ -8,18 +8,31 @@ import type { Metadata } from 'next'
 
 export const metadata: Metadata = { title: 'Mata Kuliah' }
 
-export default async function CoursesPage() {
+interface Props {
+  searchParams?: Promise<{ workspaceId?: string }>
+}
+
+export default async function CoursesPage({ searchParams }: Props) {
+  const { workspaceId } = (await searchParams) || {}
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const { data: workspace } = await supabase
+  let wsQuery = supabase
     .from('workspaces')
     .select('*')
     .eq('owner_id', user.id)
     .eq('type', 'student')
     .eq('is_active', true)
-    .single()
+
+  if (workspaceId) {
+    wsQuery = wsQuery.eq('id', workspaceId)
+  }
+
+  const { data: workspace } = await wsQuery
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
 
   if (!workspace) {
     return (
