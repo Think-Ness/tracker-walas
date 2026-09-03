@@ -5,10 +5,11 @@ import { Button, StatCard, Input, Label, Select } from '@/components/ui'
 import { Dialog, DialogHeader, DialogBody, DialogFooter } from '@/components/ui/interactive'
 import { createClient } from '@/lib/supabase/client'
 import { useToast } from '@/components/ui/toast'
-import { Save, Plus, Settings, Edit2 } from 'lucide-react'
+import { Save, Plus, Settings, Edit2, UserPlus } from 'lucide-react'
 import type { Assessment, AssessmentScore } from '@/lib/types'
 import { calculateWeightedScore } from '@/lib/utils'
 import { EditCourseModal } from './EditCourseModal'
+import { AddStudentToCourseModal } from './AddStudentToCourseModal'
 
 interface Student {
   id: string
@@ -63,6 +64,9 @@ export default function GradebookClient({
 
   // Modal edit mata kuliah
   const [showEditCourseModal, setShowEditCourseModal] = useState(false)
+
+  // Modal tambah mahasiswa ke mata kuliah
+  const [showAddStudentModal, setShowAddStudentModal] = useState(false)
 
   // Modal tambah komponen penilaian
   const [showAddModal, setShowAddModal] = useState(false)
@@ -205,6 +209,14 @@ export default function GradebookClient({
           >
             <Edit2 size={14} />
             Edit Mata Kuliah
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowAddStudentModal(true)}
+          >
+            <UserPlus size={14} />
+            Tambah Mahasiswa
           </Button>
           <Button
             variant="outline"
@@ -409,6 +421,19 @@ export default function GradebookClient({
           course={course}
           open={showEditCourseModal}
           onOpenChange={setShowEditCourseModal}
+          onSuccess={() => {
+            window.location.reload()
+          }}
+        />
+      )}
+
+      {showAddStudentModal && (
+        <AddStudentToCourseModal
+          courseId={courseId}
+          courseName={course.name}
+          enrolledStudentIds={students.map((s) => s.id)}
+          open={showAddStudentModal}
+          onOpenChange={setShowAddStudentModal}
           onSuccess={() => {
             window.location.reload()
           }}

@@ -1,22 +1,42 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { PageHeader, Card, Button, Input, Label, Select } from '@/components/ui'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/interactive'
 import { useToast } from '@/components/ui/toast'
 import { Breadcrumb } from '@/components/ui/data'
-import { Upload, Plus, FileSpreadsheet } from 'lucide-react'
+import { Upload, Plus, FileSpreadsheet, BookOpen, Check } from 'lucide-react'
 import { ImageUpload } from '@/components/ui/ImageUpload'
 import * as XLSX from 'xlsx'
 
+interface CourseOption {
+  id: string
+  name: string
+  code: string | null
+  semester: string | null
+}
+
 export default function NewStudentPage() {
+  return (
+    <Suspense fallback={<div className="max-w-2xl mx-auto py-8 text-center text-sm text-[var(--foreground-muted)]">Memuat formulir...</div>}>
+      <NewStudentForm />
+    </Suspense>
+  )
+}
+
+function NewStudentForm() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const initialCourseId = searchParams.get('courseId') || ''
   const { success, error } = useToast()
 
   const [loading, setLoading] = useState(false)
   const [workspaceId, setWorkspaceId] = useState<string | null>(null)
+  const [courses, setCourses] = useState<CourseOption[]>([])
+  const [selectedCourseId, setSelectedCourseId] = useState(initialCourseId)
+
   const [formData, setFormData] = useState({
     nim: '',
     name: '',
@@ -38,7 +58,7 @@ export default function NewStudentPage() {
   }>>([])
 
   useEffect(() => {
-    async function loadWorkspace() {
+    async function loadWorkspaceAndCourses() {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) {
@@ -52,18 +72,41 @@ export default function NewStudentPage() {
         .eq('owner_id', user.id)
         .eq('type', 'student')
         .eq('is_active', true)
+        .order('created_at', { ascending: false })
         .limit(1)
-        .single()
+        .maybeSingle()
 
       if (ws) {
         setWorkspaceId(ws.id)
+
+        // Load courses for this workspace
+        const { data: courseList } = await supabase
+          .from('courses')
+          .select('id, name, code, semester')
+          .eq('workspace_id', ws.id)
+          .eq('is_active', true)
+          .order('name')
+
+        if (courseList) {
+          setCourses(courseList)
+
+          if (initialCourseId) {
+            const matched = courseList.find((c) => c.id === initialCourseId)
+            if (matched?.semester) {
+              const semNum = parseInt(matched.semester)
+              if (!isNaN(semNum)) {
+                setFormData((prev) => ({ ...prev, semester: semNum }))
+              }
+            }
+          }
+        }
       } else {
         error('Silakan buat workspace mahasiswa terlebih dahulu.')
         router.push('/workspace/new?type=student')
       }
     }
-    loadWorkspace()
-  }, [router, error])
+    loadWorkspaceAndCourses()
+  }, [router, error, initialCourseId])
 
   const handleManualSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -72,7 +115,7 @@ export default function NewStudentPage() {
     setLoading(true)
     const supabase = createClient()
 
-    const { error: insertError } = await supabase
+    const { data: newStudent, error: insertError } = await supabase
       .from('students')
       .insert({
         workspace_id: workspaceId,
@@ -84,6 +127,8 @@ export default function NewStudentPage() {
         status: formData.status,
         photo_url: formData.photo_url,
       })
+      .select('id')
+      .single()
 
     setLoading(false)
 
@@ -92,8 +137,21 @@ export default function NewStudentPage() {
       return
     }
 
-    success('Mahasiswa berhasil ditambahkan.')
-    router.push('/academic/students')
+    // Auto-enroll if course was selected
+    if (selectedCourseId && newStudent) {
+      await supabase.from('course_students').upsert({
+        course_id: selectedCourseId,
+        student_id: newStudent.id,
+      }, { onConflict: 'course_id,student_id' })
+    }
+
+    success('Mahasiswa berhasil ditambahkan' + (selectedCourseId ? ' dan didaftarkan ke mata kuliah!' : '.'))
+
+    if (selectedCourseId) {
+      router.push(`/academic/courses/${selectedCourseId}`)
+    } else {
+      router.push('/academic/students')
+    }
     router.refresh()
   }
 
@@ -108,20 +166,48 @@ export default function NewStudentPage() {
         const wb = XLSX.read(bstr, { type: 'binary' })
         const wsname = wb.SheetNames[0]
         const ws = wb.Sheets[wsname]
-        const data = XLSX.utils.sheet_to_json<any>(ws)
+        const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][]
 
-        const parsed = data.map((row) => ({
-          nim: String(row.nim || row.NIM || row.stambuk || row.No || Math.floor(Math.random() * 900000 + 400000)),
-          name: String(row.nama || row.Nama || row.name || 'Tanpa Nama'),
-          campus_class: row.kelas || row.Kelas || row.prodi || 'AFI 6A',
-          semester: Number(row.semester || row.Semester) || 6,
-          pondok: row.pondok || row.Pondok || 'Gontor',
-        }))
+        if (data.length < 2) {
+          error('File Excel kosong atau format tidak sesuai.')
+          return
+        }
+
+        const headers = (data[0] as string[]).map((h) => String(h || '').toLowerCase().trim())
+        const nimIdx = headers.findIndex((h) => h.includes('nim') || h.includes('stambuk') || h.includes('no'))
+        const nameIdx = headers.findIndex((h) => h.includes('nama') || h.includes('name'))
+        const classIdx = headers.findIndex((h) => h.includes('kelas') || h.includes('class') || h.includes('rombel'))
+        const semIdx = headers.findIndex((h) => h.includes('semester') || h.includes('sem'))
+        const pondokIdx = headers.findIndex((h) => h.includes('pondok') || h.includes('kampus') || h.includes('daerah'))
+
+        if (nimIdx === -1 || nameIdx === -1) {
+          error('Kolom "NIM" dan "Nama" tidak ditemukan. Pastikan baris pertama adalah header.')
+          return
+        }
+
+        const parsed = []
+        for (let i = 1; i < data.length; i++) {
+          const row = data[i]
+          if (!row || !row[nimIdx] || !row[nameIdx]) continue
+
+          parsed.push({
+            nim: String(row[nimIdx]).trim(),
+            name: String(row[nameIdx]).trim(),
+            campus_class: classIdx !== -1 && row[classIdx] ? String(row[classIdx]).trim() : undefined,
+            semester: semIdx !== -1 && !isNaN(Number(row[semIdx])) ? Number(row[semIdx]) : 6,
+            pondok: pondokIdx !== -1 && row[pondokIdx] ? String(row[pondokIdx]).trim() : undefined,
+          })
+        }
+
+        if (parsed.length === 0) {
+          error('Tidak ada baris data mahasiswa yang valid dalam file.')
+          return
+        }
 
         setPreviewData(parsed)
-        success(`${parsed.length} data mahasiswa berhasil dimuat dari file.`)
-      } catch (err) {
-        error('Gagal membaca file Excel. Pastikan format file sesuai.')
+        success(`${parsed.length} data mahasiswa berhasil dibaca. Silakan periksa preview lalu klik Impor.`)
+      } catch (err: any) {
+        error('Gagal membaca file Excel: ' + (err.message || 'Format tidak valid.'))
       }
     }
     reader.readAsBinaryString(file)
@@ -143,9 +229,10 @@ export default function NewStudentPage() {
       status: 'active',
     }))
 
-    const { error: batchError } = await supabase
+    const { data: inserted, error: batchError } = await supabase
       .from('students')
       .upsert(records, { onConflict: 'workspace_id,nim' })
+      .select('id')
 
     setImporting(false)
 
@@ -154,8 +241,20 @@ export default function NewStudentPage() {
       return
     }
 
+    if (selectedCourseId && inserted) {
+      const enrollments = inserted.map((s) => ({
+        course_id: selectedCourseId,
+        student_id: s.id,
+      }))
+      await supabase.from('course_students').upsert(enrollments, { onConflict: 'course_id,student_id' })
+    }
+
     success(`${records.length} mahasiswa berhasil diimpor!`)
-    router.push('/academic/students')
+    if (selectedCourseId) {
+      router.push(`/academic/courses/${selectedCourseId}`)
+    } else {
+      router.push('/academic/students')
+    }
     router.refresh()
   }
 
@@ -182,20 +281,64 @@ export default function NewStudentPage() {
           </TabsTrigger>
           <TabsTrigger value="excel">
             <FileSpreadsheet size={14} className="mr-1.5" />
-            Impor Excel
+            Impor File Excel
           </TabsTrigger>
         </TabsList>
 
+        {/* Tab 1: Input Manual */}
         <TabsContent value="manual">
-          <Card>
-            <form onSubmit={handleManualSubmit} className="space-y-4">
+          <form onSubmit={handleManualSubmit} className="space-y-4">
+            <Card className="p-5 space-y-4">
+              {/* Auto Course Selection */}
+              <div className="bg-[var(--background-secondary)] p-3.5 rounded-[var(--radius-md)] border border-[var(--border)]">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <BookOpen size={16} className="text-[var(--primary)]" />
+                  <Label htmlFor="student-course" className="font-semibold text-xs text-[var(--foreground)]">
+                    Pilih Mata Kuliah (Otomatis Terdaftar)
+                  </Label>
+                </div>
+                <Select
+                  id="student-course"
+                  value={selectedCourseId}
+                  onChange={(e) => {
+                    const cId = e.target.value
+                    setSelectedCourseId(cId)
+                    const c = courses.find((item) => item.id === cId)
+                    if (c?.semester) {
+                      const parsed = parseInt(c.semester)
+                      if (!isNaN(parsed)) setFormData((prev) => ({ ...prev, semester: parsed }))
+                    }
+                  }}
+                >
+                  <option value="">-- Pilih Mata Kuliah (Opsional) --</option>
+                  {courses.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} {c.code ? `(${c.code})` : ''} {c.semester ? `· Semester ${c.semester}` : ''}
+                    </option>
+                  ))}
+                </Select>
+                {selectedCourseId ? (
+                  <p className="text-xs text-emerald-600 font-medium mt-1.5 flex items-center gap-1">
+                    <Check size={13} />
+                    Mahasiswa akan otomatis masuk ke daftar nilai mata kuliah ini.
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-[var(--foreground-muted)] mt-1.5">
+                    Pilih mata kuliah agar mahasiswa langsung masuk ke gradebook.
+                  </p>
+                )}
+              </div>
+
               {/* Photo Upload */}
-              <ImageUpload
-                currentUrl={formData.photo_url}
-                onUploadSuccess={(url) => setFormData({ ...formData, photo_url: url })}
-                folder="students"
-                label="Foto Mahasiswa (Kamera / Galeri)"
-              />
+              <div>
+                <Label>Pas Foto Mahasiswa (3x4)</Label>
+                <ImageUpload
+                  currentUrl={formData.photo_url}
+                  onUploadSuccess={(url) => setFormData({ ...formData, photo_url: url })}
+                  folder="students"
+                  aspectRatio="portrait"
+                />
+              </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -261,84 +404,113 @@ export default function NewStudentPage() {
                   onChange={(e) => setFormData({ ...formData, status: e.target.value })}
                 >
                   <option value="active">Aktif</option>
-                  <option value="inactive">Tidak Aktif</option>
+                  <option value="inactive">Nonaktif</option>
                   <option value="graduated">Lulus</option>
-                  <option value="archived">Diarsipkan</option>
                 </Select>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="flex gap-2 justify-end pt-2">
                 <Button
                   type="button"
                   variant="outline"
                   onClick={() => router.back()}
-                  disabled={loading}
                 >
                   Batal
                 </Button>
-                <Button type="submit" variant="primary" loading={loading} disabled={!workspaceId}>
+                <Button type="submit" variant="primary" loading={loading}>
                   Simpan Mahasiswa
                 </Button>
               </div>
-            </form>
-          </Card>
+            </Card>
+          </form>
         </TabsContent>
 
+        {/* Tab 2: Import Excel */}
         <TabsContent value="excel">
-          <Card className="space-y-4">
-            <div className="border-2 border-dashed border-[var(--border-strong)] rounded-[var(--radius-lg)] p-8 text-center bg-[var(--background-secondary)]">
-              <Upload size={32} className="mx-auto text-[var(--foreground-muted)] mb-2" />
-              <p className="text-sm font-medium text-[var(--foreground)]">Unggah Berkas Excel Mahasiswa</p>
-              <p className="text-xs text-[var(--foreground-muted)] mt-1">
-                Format kolom yang didukung: NIM, Nama, Kelas, Semester, Pondok
+          <Card className="p-5 space-y-4">
+            {/* Auto Course Selection for Import */}
+            <div className="bg-[var(--background-secondary)] p-3.5 rounded-[var(--radius-md)] border border-[var(--border)]">
+              <div className="flex items-center gap-2 mb-1.5">
+                <BookOpen size={16} className="text-[var(--primary)]" />
+                <Label htmlFor="import-course" className="font-semibold text-xs text-[var(--foreground)]">
+                  Daftarkan Hasil Impor ke Mata Kuliah (Opsional)
+                </Label>
+              </div>
+              <Select
+                id="import-course"
+                value={selectedCourseId}
+                onChange={(e) => setSelectedCourseId(e.target.value)}
+              >
+                <option value="">-- Tanpa Mata Kuliah (Hanya Database Mahasiswa) --</option>
+                {courses.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} {c.code ? `(${c.code})` : ''}
+                  </option>
+                ))}
+              </Select>
+            </div>
+
+            <div className="border-2 border-dashed border-[var(--border-strong)] rounded-[var(--radius-md)] p-6 text-center">
+              <Upload size={24} className="mx-auto text-[var(--foreground-muted)] mb-2" />
+              <p className="text-sm font-medium text-[var(--foreground)] mb-1">
+                Pilih File Excel (.xlsx / .xls)
+              </p>
+              <p className="text-xs text-[var(--foreground-muted)] mb-4">
+                Header kolom harus memiliki minimal: <strong>NIM</strong> dan <strong>Nama</strong>.
               </p>
               <input
                 type="file"
                 accept=".xlsx, .xls, .csv"
                 onChange={handleFileUpload}
-                className="mt-4 block mx-auto text-xs text-[var(--foreground-muted)] file:mr-4 file:py-2 file:px-4 file:rounded-[var(--radius-md)] file:border-0 file:text-xs file:font-medium file:bg-[var(--primary)] file:text-white hover:file:bg-[var(--primary-hover)] cursor-pointer"
+                className="text-xs file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-[var(--primary)] file:text-white hover:file:bg-[var(--primary-hover)] cursor-pointer"
               />
             </div>
 
             {previewData.length > 0 && (
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-[var(--foreground)]">
-                    Pratinjau ({previewData.length} calon mahasiswa)
-                  </p>
+                  <h3 className="text-sm font-semibold text-[var(--foreground)]">
+                    Preview Data ({previewData.length} Mahasiswa)
+                  </h3>
                   <Button
+                    type="button"
                     variant="primary"
                     size="sm"
-                    onClick={handleBatchImport}
                     loading={importing}
+                    onClick={handleBatchImport}
                   >
                     Impor Sekarang
                   </Button>
                 </div>
 
-                <div className="max-h-60 overflow-y-auto border border-[var(--border)] rounded-[var(--radius-md)]">
-                  <table className="w-full text-xs">
-                    <thead className="bg-[var(--background-secondary)] border-b border-[var(--border)]">
+                <div className="border border-[var(--border)] rounded-[var(--radius-md)] overflow-x-auto max-h-60 overflow-y-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-[var(--background-secondary)] text-[var(--foreground-muted)] border-b border-[var(--border)]">
                       <tr>
-                        <th className="p-2 text-left">NIM</th>
-                        <th className="p-2 text-left">Nama</th>
-                        <th className="p-2 text-left">Kelas</th>
-                        <th className="p-2 text-left">Semester</th>
-                        <th className="p-2 text-left">Pondok</th>
+                        <th className="px-3 py-2">NIM</th>
+                        <th className="px-3 py-2">Nama</th>
+                        <th className="px-3 py-2">Kelas</th>
+                        <th className="px-3 py-2">Semester</th>
+                        <th className="px-3 py-2">Pondok</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[var(--border)] bg-white">
-                      {previewData.slice(0, 20).map((row, idx) => (
-                        <tr key={idx}>
-                          <td className="p-2 font-mono">{row.nim}</td>
-                          <td className="p-2 font-medium">{row.name}</td>
-                          <td className="p-2">{row.campus_class || '-'}</td>
-                          <td className="p-2">{row.semester || 6}</td>
-                          <td className="p-2">{row.pondok || '-'}</td>
+                    <tbody className="divide-y divide-[var(--border)]">
+                      {previewData.slice(0, 10).map((row, idx) => (
+                        <tr key={idx} className="hover:bg-[var(--background-secondary)]">
+                          <td className="px-3 py-1.5 font-mono">{row.nim}</td>
+                          <td className="px-3 py-1.5 font-medium">{row.name}</td>
+                          <td className="px-3 py-1.5">{row.campus_class || '-'}</td>
+                          <td className="px-3 py-1.5">{row.semester || 6}</td>
+                          <td className="px-3 py-1.5">{row.pondok || '-'}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                  {previewData.length > 10 && (
+                    <p className="p-2 text-[11px] text-center text-[var(--foreground-muted)] bg-[var(--background-secondary)]">
+                      ...dan {previewData.length - 10} mahasiswa lainnya.
+                    </p>
+                  )}
                 </div>
               </div>
             )}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, use } from 'react'
+import { useState, useEffect, use } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { PageHeader, Card, Button, Input, Label, Select } from '@/components/ui'
@@ -24,12 +24,23 @@ export default function NewMemberPage({ params }: Props) {
   const [formData, setFormData] = useState({
     stambuk: '',
     name: '',
-    class_name: '6 D',
+    class_name: '',
     daerah: '',
     rayon: '',
     status: 'active',
     photo_url: null as string | null,
   })
+
+  useEffect(() => {
+    async function loadClassInfo() {
+      const supabase = createClient()
+      const { data } = await supabase.from('class_groups').select('name').eq('id', classId).maybeSingle()
+      if (data?.name) {
+        setFormData((prev) => ({ ...prev, class_name: data.name }))
+      }
+    }
+    loadClassInfo()
+  }, [classId])
 
   // Excel import state
   const [importing, setImporting] = useState(false)
