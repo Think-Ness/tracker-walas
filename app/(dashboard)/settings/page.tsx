@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { PageHeader } from '@/components/ui'
 import { ProfileSettingsSection } from './ProfileSettingsSection'
+import { WorkspaceSettingsList } from './WorkspaceSettingsList'
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = { title: 'Pengaturan' }
@@ -35,31 +36,7 @@ export default async function SettingsPage() {
 
       {/* Workspaces Section */}
       <section className="mb-6">
-        <h2 className="text-sm font-semibold text-[var(--foreground)] mb-3">Workspace</h2>
-        {!workspaces || workspaces.length === 0 ? (
-          <div className="bg-white border border-[var(--border)] rounded-[var(--radius-lg)] p-5">
-            <p className="text-sm text-[var(--foreground-muted)]">Belum ada workspace. Buat workspace dari halaman Pilih Workspace.</p>
-          </div>
-        ) : (
-          <div className="bg-white border border-[var(--border)] rounded-[var(--radius-lg)] divide-y divide-[var(--border)]">
-            {workspaces.map((ws) => (
-              <div key={ws.id} className="px-5 py-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-[var(--foreground)]">{ws.name}</p>
-                    <p className="text-xs text-[var(--foreground-muted)] mt-0.5">
-                      {ws.type === 'class' ? 'Workspace Kelas' : 'Workspace Mahasiswa'}
-                      {ws.description ? ` — ${ws.description}` : ''}
-                    </p>
-                  </div>
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${ws.is_active ? 'bg-[var(--success-subtle)] text-[var(--success)]' : 'bg-[var(--background-tertiary)] text-[var(--foreground-muted)]'}`}>
-                    {ws.is_active ? 'Aktif' : 'Nonaktif'}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        <WorkspaceSettingsList workspaces={(workspaces as any) ?? []} />
       </section>
 
       {/* AI Config Section */}

@@ -15,6 +15,7 @@ import {
   ArrowRight,
   TrendingUp,
 } from 'lucide-react'
+import { ClassDetailHeader } from './ClassDetailHeader'
 import type { Metadata } from 'next'
 
 interface Props {
@@ -110,43 +111,7 @@ export default async function ClassDetailPage({ params }: Props) {
       />
 
       {/* Class Header */}
-      <div className="bg-white border border-[var(--border)] rounded-[var(--radius-lg)] p-5 shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl sm:text-2xl font-bold text-[var(--foreground)]">{classGroup.name}</h1>
-              <Badge variant="primary">
-                {classGroup.academic_year ? `TA ${classGroup.academic_year}` : 'Aktif'}
-              </Badge>
-              {classGroup.level && (
-                <span className="text-xs bg-[var(--background-secondary)] px-2.5 py-1 rounded-[var(--radius-sm)] text-[var(--foreground-secondary)] font-medium">
-                  {classGroup.level}
-                </span>
-              )}
-            </div>
-            {classGroup.description && (
-              <p className="text-xs sm:text-sm text-[var(--foreground-muted)] mt-1 max-w-2xl">
-                {classGroup.description}
-              </p>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2 flex-wrap">
-            <Link href={`/class/${classId}/members/new`}>
-              <Button variant="outline" size="sm">
-                <Plus size={14} />
-                Tambah Santri
-              </Button>
-            </Link>
-            <Link href={`/class/${classId}/monitoring`}>
-              <Button variant="primary" size="sm">
-                <BarChart2 size={14} />
-                Catat Monitoring
-              </Button>
-            </Link>
-          </div>
-        </div>
-      </div>
+      <ClassDetailHeader classGroup={classGroup} />
 
       {/* KPI Stats Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">

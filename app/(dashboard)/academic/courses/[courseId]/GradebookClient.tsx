@@ -5,9 +5,10 @@ import { Button, StatCard, Input, Label, Select } from '@/components/ui'
 import { Dialog, DialogHeader, DialogBody, DialogFooter } from '@/components/ui/interactive'
 import { createClient } from '@/lib/supabase/client'
 import { useToast } from '@/components/ui/toast'
-import { Save, Plus, Settings } from 'lucide-react'
+import { Save, Plus, Settings, Edit2 } from 'lucide-react'
 import type { Assessment, AssessmentScore } from '@/lib/types'
 import { calculateWeightedScore } from '@/lib/utils'
+import { EditCourseModal } from './EditCourseModal'
 
 interface Student {
   id: string
@@ -59,6 +60,9 @@ export default function GradebookClient({
   const [scoreMap, setScoreMap] = useState<ScoreMap>(buildScoreMap(scores))
   const [saving, setSaving] = useState(false)
   const [dirtyStudents, setDirtyStudents] = useState<Set<string>>(new Set())
+
+  // Modal edit mata kuliah
+  const [showEditCourseModal, setShowEditCourseModal] = useState(false)
 
   // Modal tambah komponen penilaian
   const [showAddModal, setShowAddModal] = useState(false)
@@ -194,6 +198,14 @@ export default function GradebookClient({
               {dirtyStudents.size} perubahan belum disimpan
             </span>
           )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowEditCourseModal(true)}
+          >
+            <Edit2 size={14} />
+            Edit Mata Kuliah
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -390,6 +402,17 @@ export default function GradebookClient({
             </DialogFooter>
           </form>
         </Dialog>
+      )}
+
+      {showEditCourseModal && (
+        <EditCourseModal
+          course={course}
+          open={showEditCourseModal}
+          onOpenChange={setShowEditCourseModal}
+          onSuccess={() => {
+            window.location.reload()
+          }}
+        />
       )}
     </div>
   )
